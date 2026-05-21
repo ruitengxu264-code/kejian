@@ -1,0 +1,910 @@
+---
+title: "经济与商务实证研究方法 - 第 2 周：计算基础与 AI 辅助可重复工作流"
+subtitle: "完整讲义"
+author: "陈志远"
+institute: "中国人民大学商学院"
+date: "2026-04-25"
+format:
+  html:
+    theme: cosmo
+    css: ../../lecture-notes.css
+    html-math-method: mathml
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    highlight-style: github
+    embed-resources: true
+    page-layout: article
+execute:
+  echo: true
+  warning: false
+  message: false
+  eval: true
+  cache: false
+  fig-width: 12
+  fig-height: 5
+  dpi: 150
+lang: zh
+---
+
+```{python}
+#| echo: false
+#| output: false
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+import warnings
+warnings.filterwarnings('ignore')
+
+plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['figure.dpi'] = 150
+
+np.random.seed(42)
+```
+
+# 引言 {#sec-intro}
+
+本讲是第 2 周的详细讲义，对应课堂 slides 进行拓展。课堂上我们用 40 分钟讲完了四个模块——这份讲义的目标是让你在课后能够完整地复现每一个例子、理解每一个推导步骤，并在自己的研究中应用这些工具。
+
+## 上节课回顾 {#sec-review}
+
+第 1 周我们建立了实证研究的基本框架。三类问题（描述性、因果、反事实）需要不同的工具，而所有工具的核心是**识别策略**：如何论证我们的选择偏差为零？我们用潜在结果框架（Potential Outcomes Framework）形式化了这个问题：
+
+$$
+Y_i = D_i \cdot Y_i(1) + (1 - D_i) \cdot Y_i(0)
+$$
+
+观测到的结果只是两个潜在结果中的一个——识别的核心挑战在于用 $D_i = 0$ 的人的结果代替 $D_i = 1$ 的人*反事实的* $Y_i(0)$。
+
+本讲的前置问题是：在你开始做任何分析之前，你的**计算环境**是否已经支撑这种分析的规模？
+
+---
+
+# 一、计算环境搭建 {#sec-setup}
+
+## VS Code：统一研究平台 {#sec-vscode}
+
+研究者通常在多个工具间切换：Stata 做回归、Excel 画图、Word 写报告。每次切换都是一次断裂——数据格式不一致、版本号对不上、截图不是矢量图。VS Code 提供了一个统一的平台，让这些工作在同一个窗口中完成。
+
+**为什么不用 RStudio 或 Stata GUI？**
+
+- RStudio 只能方便地运行 R；Stata GUI 只能运行 Stata
+- 当研究需要 Python（ML 模型）+ Stata（面板回归）+ R（可视化）+ LaTeX（论文排版）时，你需要四个窗口
+- VS Code 的扩展生态覆盖所有这些场景，并且提供统一的快捷键、终端、Git 集成
+
+**关键扩展清单**
+
+| 扩展 | 用途 |
+|:---|:---|
+| Python (Microsoft) | Python 语法、调试、Jupyter 支持 |
+| Jupyter | 在 VS Code 内运行 `.ipynb` 文件 |
+| R (REditorSupport) | R 语法高亮、LSP 支持 |
+| Stata Enhanced | Stata `.do` 文件语法高亮 |
+| Julia | Julia 语法、REPL 集成 |
+| GitLens | 增强的 Git 功能 |
+| GitHub Copilot | AI 代码补全 |
+| Quarto | `.qmd` 文件渲染预览 |
+
+## Python + Jupyter Notebook {#sec-jupyter}
+
+Jupyter Notebook 不是"随便写写代码的地方"——用好了，它就是**可执行的研究文档**。
+
+每个 Notebook 由交替的 Markdown cell 和 Code cell 组成。Markdown cell 记录你的思路、假设和解读；Code cell 执行分析。这种结构让读者（包括三个月后的你自己）能够理解每一行代码*为什么*在这里。
+
+::: {.callout-tip}
+**Notebook 最佳实践**
+
+- *每个 cell 只做一件事*：清洗、合并、回归各自独立，方便调试
+- *开头固定种子*：`np.random.seed(42)` 是可重复性的最低要求
+- *用 Markdown 记录"为什么"*：代码说"做了什么"，文字说"为什么这么做"
+- *结尾清理环境*：`%reset -f` 或重启 kernel，验证端到端可重复
+:::
+
+## Stata 在 Jupyter 中的调用 {#sec-stata-jupyter}
+
+Python 是"胶水语言"——它最擅长把不同的工具连接在一起。`stata_setup` 包让你在 Jupyter 中直接运行 Stata 代码，不需要打开 Stata 窗口：
+
+```python
+# 安装（只需一次）
+# pip install stata_setup
+
+import stata_setup
+stata_setup.config("/Applications/Stata", "mp")   # 根据你的安装路径修改
+```
+
+配置完成后，在 cell 开头加 `%%stata` 魔法命令，整个 cell 就是 Stata 代码：
+
+```stata
+%%stata
+sysuse auto, clear
+reg mpg weight, robust
+```
+
+**实际价值**：数据清洗用 Python（`pandas`），面板回归用 Stata（`reghdfe`），可视化用 Python（`matplotlib`）——三者在同一个 Notebook 里无缝协作。
+
+## R 在 VS Code 中的集成 {#sec-r-vscode}
+
+R 用户不需要离开 VS Code。安装 R Extension + radian（增强终端）后，R 的工作流与 Python 完全类似：
+
+- `.qmd` 文档中用 `{r}` 代码块直接运行
+- 交互式 REPL 在终端中运行
+- `renv` 管理包依赖（类似 Python 的 `venv`）
+
+**推荐工作包**：`fixest`（高维固定效应面板回归，速度远超 `lm`）、`did`（Callaway-Sant'Anna DID）、`ggplot2`（学术级可视化）。
+
+## Julia + Jupyter Notebook {#sec-julia}
+
+Julia 解决了"两语言问题"：原型代码用 Python 写，性能优化用 C/Fortran 改写。Julia 让你用同一种语言写出既易读又高性能的代码。
+
+在经济学中，Julia 的典型用场是**结构估计**：BLP 需求估计的内层收缩映射需要大量数值迭代，Python 的运行时间可能是 Julia 的 50-100 倍。
+
+**VS Code 中的 Julia 工作流**
+
+1. 从 [julialang.org](https://julialang.org) 下载并安装 Julia，添加到系统 PATH
+2. VS Code 安装 Julia 扩展（语法高亮、REPL、调试器）
+3. 在 Julia REPL 中安装 IJulia 内核：
+
+```julia
+using Pkg
+Pkg.add("IJulia")      # Jupyter 内核
+Pkg.add("Plots")       # 可视化
+Pkg.add("DataFrames")  # 数据框
+Pkg.add("Optim")       # 数值优化
+```
+
+4. 打开 Jupyter Notebook，选择 Julia 内核即可使用
+
+## 多语言协作的策略 {#sec-multilang}
+
+不同语言各有优势，关键是知道*什么场景用什么语言*：
+
+| 语言 | 核心优势 | 本课程中的角色 |
+|:---|:---|:---|
+| Python | 开源生态、ML 库、LLM 调用 | 主力语言 |
+| Stata | 面板回归、聚类标准误、DID 包 | 因果推断主力 |
+| R | 统计建模、前沿方法包、ggplot2 | 对照与可视化 |
+| Julia | 数值优化速度、结构估计 | 结构模型加速 |
+| MATLAB | 矩阵运算、BLP 传统实现 | 结构估计传统路径 |
+
+**环境管理三要素**：
+
+1. Python：`python -m venv .venv` + `pip freeze > requirements.txt`
+2. R：`renv::init()` + `renv::snapshot()`
+3. 统一随机种子：Python `np.random.seed(42)`，R `set.seed(42)`，Stata `set seed 42`，Julia `Random.seed!(42)`，MATLAB `rng(42)`
+
+---
+
+# 二、AI 编程工具集成 {#sec-ai-tools}
+
+## 三类工具，三种使用模式 {#sec-ai-overview}
+
+AI 编程工具的谱系可以按**交互粒度**分为三层：
+
+- **行内补全（Copilot 类）**：在你打字时实时建议下一行或下一段，不打断工作流
+- **对话式工程（Claude Code 类）**：理解研究目标，规划并执行多步骤工作流
+- **自然语言→批量脚本（Codex CLI 类）**：在终端描述任务，生成并运行脚本
+
+这三层不是互相替代的关系——它们覆盖了研究过程的不同阶段。
+
+## GitHub Copilot {#sec-copilot}
+
+Copilot 的工作原理是基于上下文的模式匹配：它看到你之前写的代码，基于大量代码库的训练，预测你最可能写什么。
+
+**适合用 Copilot 的场景**：
+
+- 标准操作（读文件、合并数据框、画基础图表）
+- 记不住的 API 参数（如 `esttab` 的选项）
+- 重复性代码（循环生成多个子图）
+
+::: {.callout-warning}
+**Copilot 的局限**
+
+Copilot 基于模式匹配，不理解你的研究设计。它可能建议：
+
+- 在面板数据中用 `reg` 而非 `reghdfe`（没有考虑固定效应）
+- 在交错处理设计中用标准 TWFE（没有考虑 Goodman-Bacon 分解）
+- 用 `p < 0.05` 作为推断标准（没有考虑多重检验校正）
+
+*每一行 Copilot 代码都需要你理解，然后才能接受。*
+:::
+
+## Claude Code：对话式研究工程 {#sec-claude-code}
+
+Claude Code 的工作模式是"理解目标 → 制定计划 → 自主执行 → 汇报结果"。与 Copilot 逐行补全不同，Claude Code 可以：
+
+- 读取你的数据，理解其结构，建议清洗步骤
+- 创建完整的项目结构（文件夹、README、配置文件）
+- 在 Stata MCP Server 中直接运行 `reghdfe`，返回回归结果
+- 发现代码错误后自主修复，再次运行
+
+**典型对话**（本课程实际使用示例）：
+> "用 Callaway-Sant'Anna 方法估计交错 DID，数据在 `data/panel.csv`，处理变量是 `policy`，结果变量是 `lny`，集群变量是 `id`，要画事件研究图并输出 LaTeX 表格。"
+
+Claude Code 会完成整个工作流，包括数据探索、方法选择验证、代码实现、图表生成和文档撰写。
+
+## MCP 协议：闭环执行 {#sec-mcp}
+
+MCP（Model Context Protocol）是一个标准化接口，让 AI 助手能够**直接调用**外部工具——不只是生成代码文本，而是真正执行。
+
+**没有 MCP 的工作流**（断裂）：
+> AI 生成 Stata 代码 → 你复制粘贴到 Stata → 运行 → 复制结果 → 告诉 AI → AI 生成下一步
+
+**有了 MCP Stata Server**（闭环）：
+> 你描述任务 → AI 通过 MCP 直接执行 Stata → 结果自动返回给 AI → AI 继续下一步
+
+这不是技术噱头——它改变了研究者的认知负担。你从"代码执行者"变成了"研究监督者"。
+
+## 信任但验证：AI 代码的审计流程 {#sec-audit}
+
+AI 代码审计不是可选项——它是研究诚信的要求。以下是一个最小可行的审计流程：
+
+::: {.callout-note}
+**AI 代码审计四步法**
+
+1. *逐行阅读*：不是浏览，是逐行理解。不理解的行删掉或问清楚。
+2. *小样本测试*：用 100 行数据跑，检查结果是否符合直觉。
+3. *手算关键量*：$\hat{\beta}$ 的符号对吗？显著性水平合理吗？
+4. *记录决策*：AI 建议了什么？你接受了什么？你改了什么？为什么？
+:::
+
+第 4 步是研究论文中"AI 使用说明"附录的来源——现在一些顶刊开始要求提交这份记录。
+
+---
+
+# 三、Monte Carlo 模拟的逻辑 {#sec-mc}
+
+## 什么是 Monte Carlo 模拟？ {#sec-mc-intro}
+
+Monte Carlo 模拟的核心思想是：**用计算机大量重复一个随机实验，通过统计重复结果的分布来理解随机现象的性质。**
+
+名字来自摩纳哥的蒙特卡洛赌场。1940 年代，Von Neumann 和 Stanislaw Ulam 在曼哈顿计划中用随机抽样方法解决中子扩散的数值积分问题，戏称这个方法为"蒙特卡洛方法"。今天，Monte Carlo 方法在统计学、物理学、金融学、计量经济学中无处不在。
+
+**核心框架**：
+
+$$
+\underbrace{\text{设定 DGP}}_{\text{真实世界的规则}} \xrightarrow{\text{重复 } R \text{ 次}} \underbrace{\text{计算估计量}}_{\hat{\theta}^{(r)}} \xrightarrow{\text{汇总}} \underbrace{\text{分布 } \{\hat{\theta}^{(r)}\}_{r=1}^R}_{\text{抽样分布的近似}}
+$$
+
+当数学推导太复杂时，MC 给你**实验证据**来替代数学证明。
+
+## 大数定律（LLN） {#sec-lln}
+
+### 定义与直觉
+
+**大数定律（Law of Large Numbers）**有两种形式：
+
+**弱大数定律（Weak LLN / Khinchine）**：设 $X_1, \ldots, X_n$ 独立同分布，$E[X_i] = \mu < \infty$，则：
+
+$$
+\bar{X}_n = \frac{1}{n}\sum_{i=1}^n X_i \xrightarrow{p} \mu
+$$
+
+即样本均值**依概率收敛**于总体均值——对任意 $\varepsilon > 0$，$P(|\bar{X}_n - \mu| > \varepsilon) \to 0$。
+
+**强大数定律（Strong LLN / Kolmogorov）**（更强的结论）：
+
+$$
+P\left(\lim_{n \to \infty} \bar{X}_n = \mu\right) = 1
+$$
+
+即几乎必然收敛。
+
+**直觉**：对于一枚公平硬币，前 10 次可能 7 次正面，但 10000 次后正面比例会非常接近 0.5。"样本量越大，平均越准"——这正是统计推断的基础。
+
+### MC 验证
+
+```{python}
+#| fig-cap: "大数定律：抛硬币次数越多，正面比例越收敛到 0.5"
+np.random.seed(42)
+n_flips = 10000
+flips = np.random.binomial(1, 0.5, n_flips)
+cumulative_prop = np.cumsum(flips) / np.arange(1, n_flips + 1)
+
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.plot(range(1, n_flips + 1), cumulative_prop, color='#003153', linewidth=1, alpha=0.9)
+ax.axhline(y=0.5, color='#00A8CC', linestyle='--', linewidth=2, label='真实概率 $p = 0.5$')
+ax.fill_between(range(1, n_flips + 1), 0.4, 0.6, alpha=0.05, color='#00A8CC')
+ax.set_xlabel('抛硬币次数 $n$（对数刻度）', fontsize=13)
+ax.set_ylabel('正面比例 $\\bar{X}_n$', fontsize=13)
+ax.set_title('大数定律：$\\bar{X}_n \\to \\mu = 0.5$（依概率收敛）', fontsize=14)
+ax.set_xscale('log')
+ax.legend(fontsize=12)
+ax.set_ylim(0.3, 0.7)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+## 中心极限定理（CLT） {#sec-clt}
+
+### 定义与推导
+
+**中心极限定理（Central Limit Theorem）**：设 $X_1, \ldots, X_n$ 独立同分布，$E[X_i] = \mu$，$\text{Var}(X_i) = \sigma^2 < \infty$，则：
+
+$$
+\sqrt{n}(\bar{X}_n - \mu) \xrightarrow{d} N(0, \sigma^2)
+$$
+
+等价地：
+
+$$
+\frac{\bar{X}_n - \mu}{\sigma / \sqrt{n}} \xrightarrow{d} N(0, 1)
+$$
+
+**注意 CLT 的条件**：
+
+1. 独立同分布（可放宽到独立不同分布的 Lyapunov 条件）
+2. 有限方差 $\sigma^2 < \infty$（Cauchy 分布不满足这个条件，CLT 不适用）
+
+**实践含义**：样本量 $n$ 越大，$\hat{\beta}$ 的抽样分布越接近正态。一般经验是 $n \geq 30$ 时 CLT 近似已经不错；但对于高度偏态的总体，可能需要 $n \geq 100$。
+
+### MC 验证（非正态总体）
+
+```{python}
+#| fig-cap: "CLT：从指数分布（偏态）总体中抽样，但样本均值的分布趋于正态"
+np.random.seed(42)
+population = np.random.exponential(scale=2, size=100000)
+
+sample_sizes = [5, 30, 100]
+R = 5000
+fig, axes = plt.subplots(1, 3, figsize=(12, 4.5))
+
+for idx, n in enumerate(sample_sizes):
+    means = [np.mean(np.random.choice(population, n)) for _ in range(R)]
+    axes[idx].hist(means, bins=50, color='#003153', alpha=0.75,
+                   edgecolor='white', density=True)
+    axes[idx].axvline(np.mean(population), color='#00A8CC',
+                      linestyle='--', linewidth=2, label=f'$\\mu$ = {np.mean(population):.2f}')
+    axes[idx].set_title(f'$n = {n}$', fontsize=14)
+    axes[idx].set_xlabel('$\\bar{{X}}_n$', fontsize=13)
+    if idx == 0:
+        axes[idx].set_ylabel('密度', fontsize=13)
+    axes[idx].legend(fontsize=11)
+
+fig.suptitle('CLT：总体为指数分布（偏态），样本均值趋于正态', fontsize=13)
+plt.tight_layout()
+plt.show()
+```
+
+## OLS 无偏性与一致性 {#sec-ols-mc}
+
+### 数学背景
+
+考虑简单线性回归：$y_i = \beta x_i + \varepsilon_i$，其中 $E[\varepsilon_i | x_i] = 0$。OLS 估计量为：
+
+$$
+\hat{\beta} = \frac{\sum_{i=1}^n x_i y_i}{\sum_{i=1}^n x_i^2} = \frac{\mathbf{x}'\mathbf{y}}{\mathbf{x}'\mathbf{x}}
+$$
+
+**无偏性的证明**：将 DGP $y_i = \beta x_i + \varepsilon_i$ 代入：
+
+$$
+\hat{\beta} = \frac{\sum x_i (\beta x_i + \varepsilon_i)}{\sum x_i^2} = \beta \cdot \underbrace{\frac{\sum x_i^2}{\sum x_i^2}}_{=1} + \underbrace{\frac{\sum x_i \varepsilon_i}{\sum x_i^2}}_{\text{关键项}}
+$$
+
+取期望（在 $\mathbf{x}$ 固定的条件下）：
+
+$$
+E[\hat{\beta}] = \beta + \frac{\sum x_i \cdot E[\varepsilon_i | \mathbf{x}]}{\sum x_i^2} = \beta + 0 = \beta
+$$
+
+这就是无偏性：$E[\hat{\beta}] = \beta$，在任意固定样本量 $n$ 下成立。
+
+**一致性**是更强的结论：$\hat{\beta} \xrightarrow{p} \beta$ 当 $n \to \infty$。利用大数定律：
+
+$$
+\hat{\beta} = \beta + \frac{\frac{1}{n}\sum x_i \varepsilon_i}{\frac{1}{n}\sum x_i^2} \xrightarrow{p} \beta + \frac{E[x_i \varepsilon_i]}{E[x_i^2]} = \beta + \frac{0}{E[x_i^2]} = \beta
+$$
+
+其中 $E[x_i \varepsilon_i] = 0$ 用到了外生性条件。**当外生性不满足时（$E[x_i \varepsilon_i] \neq 0$），OLS 不一致——这正是工具变量方法的出发点。**
+
+### Monte Carlo 验证：无偏性
+
+```{python}
+#| fig-cap: "OLS 估计量的抽样分布：R=2000 次模拟，分布中心在真值 β=2 处"
+np.random.seed(42)
+beta_true = 2.0
+R = 2000
+n = 100
+
+beta_hats = []
+for _ in range(R):
+    x = np.random.normal(0, 1, n)
+    epsilon = np.random.normal(0, 1, n)
+    y = beta_true * x + epsilon
+    beta_hat = np.sum(x * y) / np.sum(x ** 2)
+    beta_hats.append(beta_hat)
+
+beta_hats = np.array(beta_hats)
+
+fig, ax = plt.subplots(figsize=(10, 4.5))
+ax.hist(beta_hats, bins=60, color='#003153', alpha=0.75, edgecolor='white', density=True)
+ax.axvline(beta_true, color='#00A8CC', linestyle='--', linewidth=2.5,
+           label=f'真实值 $\\beta = {beta_true}$')
+ax.axvline(beta_hats.mean(), color='#e74c3c', linestyle=':', linewidth=2,
+           label=f'MC 均值 $= {beta_hats.mean():.4f}$')
+ax.set_xlabel('$\\hat{{\\beta}}$ 的值', fontsize=14)
+ax.set_ylabel('密度', fontsize=14)
+ax.set_title(f'OLS 无偏性：$E[\\hat{{\\beta}}] \\approx \\beta = {beta_true}$  （$R={R}, n={n}$）', fontsize=14)
+ax.legend(fontsize=12)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+print(f"MC 均值 = {beta_hats.mean():.4f}  （真值 = {beta_true}）")
+print(f"MC 标准差 = {beta_hats.std():.4f}")
+print(f"理论标准误 = {1.0 / np.sqrt(n):.4f}  （σ_ε=1, σ_x=1, n={n}）")
+```
+
+## OLS 一致性的可视化：五语言实现 {#sec-ols-consistency}
+
+一致性是说：当 $n \to \infty$ 时，$\hat{\beta}$ 的分布越来越集中在 $\beta$ 附近。我们用三个样本量（$n = 30, 100, 1000$）来可视化这个过程。
+
+下面的五个标签页展示了同一个模拟实验在不同编程语言中的实现方式，以及各自特征性的图表风格。
+
+::: {.panel-tabset}
+
+## Python
+
+**Python / matplotlib 风格**：简洁高效，以 `numpy` 的向量化运算为核心，`matplotlib` 生成定制化图表。
+
+```{python}
+#| echo: true
+#| eval: true
+#| fig-cap: "Python/matplotlib：OLS 一致性——样本量越大，β̂ 分布越集中"
+#| label: fig-ols-python
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+np.random.seed(42)
+beta_true = 2.0
+R = 2000
+
+fig, axes = plt.subplots(1, 3, figsize=(12, 5), sharey=True)
+
+for idx, n in enumerate([30, 100, 1000]):
+    betas = []
+    for _ in range(R):
+        x = np.random.normal(0, 1, n)
+        eps = np.random.normal(0, 1, n)
+        y = beta_true * x + eps
+        betas.append(np.sum(x * y) / np.sum(x ** 2))   # OLS 公式
+
+    betas = np.array(betas)
+    axes[idx].hist(betas, bins=50, color='#003153', alpha=0.75,
+                   edgecolor='white', density=True)
+    axes[idx].axvline(beta_true, color='#00A8CC', linestyle='--', linewidth=2)
+    axes[idx].set_title(f'$n = {n}$，SD $= {betas.std():.3f}$', fontsize=13)
+    axes[idx].set_xlabel('$\\hat{\\beta}$', fontsize=13)
+    axes[idx].set_xlim(1.35, 2.65)
+    if idx == 0:
+        axes[idx].set_ylabel('密度', fontsize=13)
+    axes[idx].grid(True, alpha=0.3)
+
+fig.suptitle('OLS 一致性：样本量越大，估计量分布越集中（Python/matplotlib）',
+             fontsize=13)
+plt.tight_layout()
+plt.show()
+```
+
+## R
+
+**R / ggplot2 风格**：使用 `tidyverse` 生态。`purrr::map_dfr` 高效完成模拟，`ggplot2` 的 `facet_wrap` 生成三联图。特征性的浅灰色背景网格（`theme_gray()`）是 ggplot2 的识别标志。
+
+```r
+#| echo: true
+#| eval: false
+
+library(tidyverse)
+
+set.seed(42)
+beta_true <- 2.0
+R         <- 2000
+
+# 模拟函数
+sim_ols <- function(n) {
+  replicate(R, {
+    x   <- rnorm(n)
+    eps <- rnorm(n)
+    y   <- beta_true * x + eps
+    sum(x * y) / sum(x^2)        # OLS 公式
+  })
+}
+
+# 对三个样本量运行模拟，整合成数据框
+results <- map_dfr(
+  c(30, 100, 1000),
+  ~tibble(n = as.character(.x), beta_hat = sim_ols(.x))
+)
+
+# ggplot2 可视化（theme_gray 默认风格）
+ggplot(results, aes(x = beta_hat)) +
+  geom_histogram(bins = 50, fill = "#4472C4", color = "white", alpha = 0.9) +
+  geom_vline(xintercept = beta_true, color = "#E15759",
+             linetype = "dashed", linewidth = 1) +
+  facet_wrap(~n, labeller = label_bquote(n == .(n))) +
+  theme_gray(base_size = 13) +
+  labs(
+    title = "OLS 一致性：Monte Carlo 模拟（R / ggplot2）",
+    x     = expression(hat(beta)),
+    y     = "频次"
+  ) +
+  xlim(1.35, 2.65)
+```
+
+> **典型输出效果**（R/ggplot2 theme_gray 默认风格）
+
+![R/ggplot2 输出：浅灰背景网格，蓝色直方图，ggplot2 特征性排版](figures/W2/mc_ols_r_style.png){fig-align="center"}
+
+## Stata
+
+**Stata 风格**：使用 `simulate` 命令批量重复模拟程序，`histogram` 命令绘图。特征性的 `s1color` 配色（海军蓝 `#1A476F`）和白色背景是 Stata 图形的识别标志。
+
+```stata
+* ─────────────────────────────────────────────────────
+*  OLS 一致性 Monte Carlo — Stata 实现
+* ─────────────────────────────────────────────────────
+clear all
+set more off
+set seed 42
+
+* 定义单次模拟的程序
+program define sim_ols, rclass
+    syntax, n(integer)
+    drop _all
+    set obs `n'
+    gen x   = rnormal()
+    gen eps = rnormal()
+    gen y   = 2 * x + eps
+    reg y x
+    return scalar beta_hat = _b[x]
+end
+
+* 对三个样本量分别运行 2000 次模拟
+foreach n in 30 100 1000 {
+    simulate beta_hat = r(beta_hat), reps(2000) seed(42): sim_ols, n(`n')
+
+    * 绘制直方图（s1color scheme）
+    set scheme s1color
+    histogram beta_hat, ///
+        bin(50) frequency normal ///
+        xline(2, lcolor(maroon) lwidth(medthick)) ///
+        xtitle("{&beta}-hat") ///
+        title("n = `n'  (SD = " + string(r(sd), "%6.4f") + ")") ///
+        color(navy%80) ///
+        name(hist_`n', replace)
+
+    clear
+}
+
+* 合并三图
+graph combine hist_30 hist_100 hist_1000, ///
+    title("OLS 一致性：Monte Carlo 模拟 (Stata)") ///
+    rows(1) xsize(10) ysize(4)
+graph export "figures/W2/ols_consistency_stata.png", replace width(2000)
+```
+
+> **典型输出效果**（Stata s1color scheme：海军蓝直方图、白色背景、特征性 Stata 轴标签格式）
+
+![Stata 输出：s1color scheme，海军蓝 #1A476F 直方图，白色背景，Stata 特征性边框](figures/W2/mc_ols_stata_style.png){fig-align="center"}
+
+## Julia
+
+**Julia / Plots.jl 风格**：使用 Julia 的广播运算符 `.*`、向量化 `randn(n)` 和 `Plots.jl`（GR backend）。特征性的 Julia 蓝（`#4063D8`，来自 Julia logo）和浅紫色背景是 Plots.jl 的识别标志。
+
+```julia
+# ─────────────────────────────────────────────────────
+#  OLS 一致性 Monte Carlo — Julia 实现
+# ─────────────────────────────────────────────────────
+using Random, Statistics, Plots, StatsPlots
+
+Random.seed!(42)
+β_true = 2.0
+R      = 2000
+
+# 向量化单次 OLS 估计（Julia 风格：简洁且高性能）
+function ols_once(n::Int, β::Float64)
+    x   = randn(n)
+    ε   = randn(n)
+    y   = β .* x .+ ε
+    return dot(x, y) / dot(x, x)    # OLS 公式
+end
+
+# 对三个样本量运行模拟
+ns    = [30, 100, 1000]
+plots = []
+
+for n in ns
+    β̂ = [ols_once(n, β_true) for _ in 1:R]
+
+    p = histogram(β̂, bins=50,
+        normalize  = :pdf,
+        color      = :dodgerblue,    # Julia 默认蓝 #4063D8
+        alpha      = 0.82,
+        label      = false,
+        xlabel     = "β̂",
+        title      = "n = $n  (σ̂ = $(round(std(β̂), digits=3)))",
+        xlims      = (1.35, 2.65),
+        titlefont  = font(12))
+    vline!(p, [β_true], color=:red, linestyle=:dash, linewidth=2, label="β = $β_true")
+    push!(plots, p)
+end
+
+# 组合三个子图（Plots.jl layout）
+fig = plot(plots..., layout = (1, 3), size = (1200, 450),
+           plot_title = "OLS 一致性 — Monte Carlo 模拟（Julia / Plots.jl）")
+savefig(fig, "figures/W2/ols_consistency_julia.png")
+```
+
+> **典型输出效果**（Julia/Plots.jl GR backend：Julia 标志性蓝色 #4063D8，浅紫色背景，Plots.jl 特征性图例样式）
+
+![Julia/Plots.jl 输出：Julia 蓝色 #4063D8，浅紫色面板背景，GR backend 默认风格](figures/W2/mc_ols_julia_style.png){fig-align="center"}
+
+## MATLAB
+
+**MATLAB 风格**：使用 MATLAB 的矩阵语法（向量运算不需要点乘符号）和 `histogram` 函数。特征性的 MATLAB 蓝（`#0072BD`，来自 MathWorks 品牌色）、白色背景加完整边框是 MATLAB 图形的识别标志。
+
+```matlab
+% ─────────────────────────────────────────────────────
+%  OLS 一致性 Monte Carlo — MATLAB 实现
+% ─────────────────────────────────────────────────────
+clear; clc;
+rng(42)                  % 设置随机种子
+beta_true = 2.0;
+R         = 2000;
+ns        = [30, 100, 1000];
+
+figure('Position', [100 100 1200 450])
+
+for i = 1:length(ns)
+    n        = ns(i);
+    beta_hat = zeros(R, 1);
+
+    for r = 1:R
+        x        = randn(n, 1);          % 正态随机向量
+        eps      = randn(n, 1);
+        y        = beta_true * x + eps;
+        beta_hat(r) = (x' * x) \ (x' * y);  % OLS 公式（矩阵形式）
+    end
+
+    subplot(1, 3, i)
+    h = histogram(beta_hat, 50, ...
+        'Normalization', 'pdf', ...
+        'FaceColor', [0 0.447 0.741], ...   % MATLAB 默认蓝 #0072BD
+        'EdgeColor', 'white', ...
+        'FaceAlpha', 1.0);
+    xline(beta_true, '--r', 'LineWidth', 2, 'Label', '\beta = 2')
+    xlim([1.35 2.65])
+    xlabel('\beta_{hat}', 'FontSize', 12)
+    if i == 1
+        ylabel('Relative Frequency', 'FontSize', 11)
+    end
+    title(sprintf('n = %d  (Std = %.3f)', n, std(beta_hat)), 'FontSize', 12)
+    grid on
+    box on                               % MATLAB 特有：完整边框
+end
+
+sgtitle('OLS Consistency: Monte Carlo Simulation (MATLAB)', 'FontSize', 13)
+exportgraphics(gcf, 'figures/W2/ols_consistency_matlab.png', 'Resolution', 150)
+```
+
+> **典型输出效果**（MATLAB 默认风格：#0072BD 蓝色，白色背景，完整矩形边框，MATLAB 特有 grid 样式）
+
+![MATLAB 输出：#0072BD 蓝色，白色背景加完整边框（box on），MATLAB 特征性 grid 和轴标签](figures/W2/mc_ols_matlab_style.png){fig-align="center"}
+
+:::
+
+### 从五语言对比中学到什么？
+
+| 语言 | 核心语法特征 | 图表特征 | 模拟速度（参考） |
+|:---|:---|:---|:---|
+| Python | `np.random.normal`, list comprehension | 高度可定制 | 中 |
+| R | `replicate()`, `map_dfr()`, `ggplot2` | `theme_gray` 灰底白格 | 中 |
+| Stata | `simulate` 命令，`foreach` 循环 | 海军蓝，白底 | 慢（解释型） |
+| Julia | 广播 `.*`，原生速度 | Julia 蓝，浅紫底 | 快（JIT 编译） |
+| MATLAB | 矩阵运算，`\` 解方程 | 品牌蓝 `#0072BD`，边框完整 | 中 |
+
+关键观察：**五种语言实现完全相同的统计逻辑，但语法习惯、默认美学和执行效率各不相同。选择语言时，考虑的是你的研究问题，而不是个人偏好。**
+
+## Monte Carlo 的一般框架 {#sec-mc-framework}
+
+每一个 MC 实验都遵循相同的五步框架：
+
+$$
+\underbrace{\text{设定 DGP}}_{\text{步骤 1}} \to \underbrace{\text{生成数据}}_{\text{步骤 2}} \to \underbrace{\text{计算估计量}}_{\text{步骤 3}} \to \underbrace{R \text{ 次重复}}_{\text{步骤 4}} \to \underbrace{\text{汇总结果}}_{\text{步骤 5}}
+$$
+
+::: {.callout-note}
+**MC 设计三要素**
+
+1. *固定随机种子*：所有语言都有对应命令（见上表），这是可重复性的最低要求。
+2. *足够的重复次数* $R$：通常 $R \geq 1000$；用于计算覆盖率时建议 $R \geq 5000$。
+3. *结果可视化*：直方图比数字更直观；用 MC 标准差和偏差（bias）量化结果。
+:::
+
+## 为什么 MC 对实证研究者重要？ {#sec-mc-why}
+
+**场景 1：验证新估计量**。你推导了一个新 DID 估计量，数学证明太复杂——用 MC 模拟，设定 DGP，看它是否在 $R$ 次重复中平均回到真值。这是顶刊 Theory 论文的标准验证流程。
+
+**场景 2：理解有限样本行为**。CLT 说"$n \to \infty$ 时趋于正态"，但你的面板只有 50 个县。MC 告诉你在 $n = 50$ 时，$t$ 检验的真实尺寸（size）是 5% 还是 12%？
+
+**场景 3：检验稳健性**。你怀疑误差项异方差会影响标准误。MC 告诉你：在你的误差结构下，普通标准误和稳健标准误的 $t$ 检验覆盖率分别是多少？
+
+---
+
+# 四、可重复研究工作流 {#sec-workflow}
+
+## 三阶段循环 {#sec-workflow-stages}
+
+可重复研究不是一次性的操作，而是一个**循环迭代**的过程：
+
+**构建（Build）** → **执行（Execute）** → **迭代（Refine）**
+
+每一轮迭代都在同一个项目结构中进行——没有"重新开始"，只有"增量更新"。
+
+## 构建阶段：项目结构 {#sec-workflow-build}
+
+一个好的项目结构让任何人（包括你自己）都能在 5 分钟内理解这个项目在做什么：
+
+```
+research_project/
+├── data/
+│   ├── raw/          # 原始数据（只读，永不修改）
+│   ├── cleaned/      # 清洗后，可重新生成
+│   └── README.md     # 数据来源、变量说明、样本说明
+├── code/
+│   ├── 01_clean.py   # 数据清洗
+│   ├── 02_analysis.do # Stata 核心回归
+│   └── 03_figures.R  # R 可视化
+├── output/
+│   ├── tables/       # .tex 或 .xlsx 表格
+│   └── figures/      # 高分辨率图表
+├── docs/             # 草稿、笔记
+└── README.md         # 项目说明（10 行以内能看懂项目）
+```
+
+**原则**：原始数据只读（用 `.gitignore` 或文件权限保护）；代码按运行顺序编号；输出与代码分离。
+
+## 执行阶段：可追溯的分析 {#sec-workflow-execute}
+
+每一步分析都应当可追溯到具体的代码文件和数据文件。实践中，这意味着：
+
+```python
+# 好的脚本骨架
+# === 配置（集中管理，易于修改）===
+SEED      = 42
+DATA_PATH = "data/cleaned/panel.csv"
+OUT_PATH  = "output/tables/"
+CLUSTER   = "firm_id"
+
+np.random.seed(SEED)
+
+# === 加载数据 ===
+df = pd.read_csv(DATA_PATH)
+print(f"样本量: {len(df)}，变量数: {df.shape[1]}")  # 验证加载正确
+
+# === 核心分析 ===
+# ... 回归、检验 ...
+
+# === 输出（可追溯）===
+# results.to_csv(OUT_PATH + "table3.csv", index=False)
+```
+
+## 迭代阶段：Git 版本控制 {#sec-workflow-git}
+
+没有版本控制的研究：`paper_final_v2_REAL_FINAL_submit_revised.docx`。
+
+有了 Git，每次修改都有记录——谁改了什么、何时改的、为什么改。最小可行的 Git 工作流：
+
+```bash
+git add code/02_analysis.do           # 标记改动
+git commit -m "fix: switch to robust SE after heteroskedasticity test"
+git push                              # 推送到 GitHub
+```
+
+审稿人要求"回到第一稿的规格"？`git checkout [commit-hash]` 一个命令搞定。
+
+## AI 辅助的工作流升级 {#sec-ai-workflow}
+
+AI 加速了三个阶段，但**没有替代**任何判断：
+
+| 阶段 | 传统方式 | AI 辅助方式 | 不变的是 |
+|:---|:---|:---|:---|
+| 构建 | 手动创建结构 | Claude Code 生成骨架 | 研究设计 |
+| 执行 | 手写每行代码 | Copilot 辅助，人工审查 | 识别策略 |
+| 迭代 | 手动改规格重跑 | 自然语言描述改动 | 结果解读 |
+
+**AI 审计日志（每次 AI 使用后记录）**：
+
+| 字段 | 内容 |
+|:---|:---|
+| 工具 | Copilot / Claude Code |
+| 任务 | 生成 Stata DID 回归代码 |
+| 接受 | 基本 `reghdfe` 结构 |
+| 修改 | 将 `vce(robust)` 改为 `vce(cluster id)`（面板数据需要聚类） |
+| 验证 | 手动跑小样本，检查系数符号与预期一致 |
+
+---
+
+# 总结 {#sec-summary}
+
+## 本讲要点回顾
+
+### 1. 计算环境是研究野心的基础设施
+
+VS Code 统一了多语言工作流；Jupyter Notebook 是可执行的研究文档；环境管理（venv/renv/Pkg）是可重复性的最低要求。
+
+### 2. AI 工具各有分工，均需人工审查
+
+- Copilot：行内补全，擅长标准操作
+- Claude Code：对话式工程，适合多步骤工作流
+- Codex CLI：批量脚本自动化
+- MCP 协议实现闭环执行
+
+### 3. Monte Carlo 是建立直觉的核心工具
+
+- LLN：样本均值依概率收敛于总体均值
+- CLT：无论总体分布，样本均值趋于正态
+- MC 验证 OLS 的无偏性与一致性：五语言实现，相同逻辑，不同美学
+
+### 4. 可重复研究工作流
+
+构建 → 执行 → 迭代的三阶段循环；原始数据只读；Git 版本控制；AI 使用须有审计日志。
+
+## 关键公式汇总
+
+| 概念 | 公式 | 条件 |
+|:---|:---|:---|
+| 大数定律 | $\bar{X}_n \xrightarrow{p} \mu$ | iid，$E[X_i] = \mu < \infty$ |
+| 中心极限定理 | $\sqrt{n}(\bar{X}_n - \mu) \xrightarrow{d} N(0, \sigma^2)$ | iid，$\sigma^2 < \infty$ |
+| OLS 估计量 | $\hat{\beta} = (\mathbf{X}'\mathbf{X})^{-1}\mathbf{X}'\mathbf{y}$ | 矩阵形式 |
+| OLS 无偏性 | $E[\hat{\beta}] = \beta$ | $E[\varepsilon|X] = 0$ |
+| OLS 一致性 | $\hat{\beta} \xrightarrow{p} \beta$ | 外生性 + LLN |
+
+## 下一讲预告
+
+**第 3 周：现代减少形式方法——DID 及其变体**
+
+有了计算环境和工作流之后，我们开始用**真正的识别策略**做因果推断。DID 是应用计量经济学中最广泛使用的方法，但它在交错处理设计（staggered adoption）下存在严重问题——这是近五年方法论文献的核心战场。
+
+我们将覆盖：
+
+- 经典 2×2 DiD 的识别逻辑与 TWFE 等价性
+- Goodman-Bacon (2021) 分解：TWFE 在交错处理下的缺陷
+- Callaway-Sant'Anna (2021) 估计量
+- 事件研究图与预趋势检验
+- 合成控制法
+
+## 课后思考
+
+1. **在你自己的研究领域**：你能否找到一个方法论问题，可以用 Monte Carlo 模拟来检验估计量的有限样本性质？写出 DGP 和你想要验证的性质。
+
+2. **一致性与无偏性的区别**：为什么一致性在渐近理论中比无偏性更重要？能否构造一个有偏但一致的估计量的例子？（提示：考虑样本中位数。）
+
+3. **AI 审计**：下次使用 Copilot 或 Claude Code 时，按照本讲的审计四步法，记录一份你修改了 AI 建议的代码的实例。你修改了什么？为什么？
+
+---
+
+**联系方式**
+
+- 邮箱：chenzhiyuan@rmbs.ruc.edu.cn
+- 办公室：919 明德商学楼
+- Office Hours：邮件或微信预约
+
+*本讲义基于 Gentle (2009)、Efron & Tibshirani (1993)、Korinek (2023) 及课程讲义整理而成。代码示例为作者原创，可自由使用。*
+
+---
+
+# 参考文献 {#sec-refs}
+
+- Bezanson, J., Edelman, A., Karpinski, S., & Shah, V. B. (2017). Julia: A fresh approach to numerical computing. *SIAM Review*, 59(1), 65–98.
+- Efron, B., & Tibshirani, R. J. (1993). *An Introduction to the Bootstrap*. Chapman & Hall.
+- Gentle, J. E. (2009). *Computational Statistics*. Springer.
+- Korinek, A. (2023). Generative AI for economic research: Use cases and implications for economists. *Journal of Economic Literature*, 61(4), 1281–1317.
+- Wickham, H. (2023). *R for Data Science* (2nd ed.). O'Reilly Media. <https://r4ds.hadley.nz>
+- Anthropic. (2025). Model Context Protocol specification. <https://modelcontextprotocol.io>

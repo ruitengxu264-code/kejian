@@ -1,0 +1,690 @@
+---
+title: "经济与商务实证研究方法 - 第 3 周：面板数据与经典 DiD"
+subtitle: "完整讲义：从固定效应到 2×2 DiD 再到聚类推断"
+author: "陈志远"
+institute: "中国人民大学商学院"
+date: "2026-05-16"
+format:
+  html:
+    theme: cosmo
+    css: ../../lecture-notes.css
+    html-math-method: mathml
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    highlight-style: github
+    self-contained: true
+    embed-resources: true
+    page-layout: article
+execute:
+  echo: true
+  warning: false
+  message: false
+  eval: true
+  cache: false
+  fig-width: 10
+  fig-height: 6
+  dpi: 150
+lang: zh
+jupyter: rmeb-venv
+---
+
+```{python}
+#| echo: false
+#| output: false
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+import warnings
+warnings.filterwarnings('ignore')
+
+plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['figure.dpi'] = 150
+
+np.random.seed(42)
+```
+
+# 引言 {#sec-intro}
+
+经过前两周的基础铺垫——W1 建立研究设计的因果思维，W2 搭建可重复的 AI 协作工作流——我们终于可以开始真正的*识别策略*实战。本讲聚焦两件事：*面板数据分析*与*经典 2×2 双重差分法*。这两者紧密相连：DiD 可以看作是面板 FE 估计在“两组两期”下的特例，而聚类标准误的必要性则是贯穿整个面板分析的推断主线。
+
+为什么要把现代 DiD 方法（Callaway-Sant'Anna、Sun-Abraham 等）单独放到下一讲？因为现代方法的所有问题——负权重、异质动态、正确的对照组选择——都建立在对经典 DiD 的深度理解之上。本讲先确保每位同学都能“亲手”用 Monte Carlo 看到 Bertrand-Duflo-Mullainathan (2004) 那个著名的 45% 过度拒绝结果，再去看更复杂的估计量。
+
+## 上节课回顾
+
+W2 的核心是“构建-执行-迭代”的计算工作流与 Monte Carlo 的思维武器：
+
+- *统一工作平台*：VS Code + Python/Stata/R/Julia
+- *AI 编程协作*：Copilot 行内补全、Claude Code 对话工程、Codex 自然语言批量代码、MCP 协议连接 AI 与研究工具
+- *Monte Carlo 模拟*：大数定律与中心极限定理的动手验证
+- *可重复研究工作流*：原始数据只读、代码按序编号、Git 版本控制、AI 审计日志
+
+今天我们把这套“基础设施”真正用起来——在一个具体的识别策略（DiD）上，从理论、代码、可视化到稳健性推断，走完一整条研究流程。
+
+# 第一部分：面板数据与固定效应 {#sec-panel}
+
+## 面板数据的结构
+
+*面板数据*（Panel Data）指对同一批单位在多个时期的重复观测。数学上，一个面板数据集可以写作：
+
+$$\{(Y_{it}, X_{it}) : i = 1, \dots, N;\ t = 1, \dots, T_i\}$$
+
+其中 $i$ 索引*单位*（个体、企业、城市、国家），$t$ 索引*时期*。我们假设 $N$ 较大而 $T_i$ 较小——这是应用经济学中最常见的“短面板”场景。样本一致性依赖于 $N \to \infty$，而非 $T \to \infty$。
+
+::: {.callout-note}
+**平衡与非平衡**
+
+若每个 $i$ 都有相同的 $T$ 期观测，称为*平衡面板*；若 $T_i$ 因单位而异（常见于企业进入退出），则为*非平衡面板*。大多数教学代码假设平衡，但非平衡只需在代码里正确处理缺失即可。
+:::
+
+## 为什么需要面板？遗漏变量问题
+
+考虑基本线性模型：
+
+$$Y_{it} = X_{it}^\prime \beta + \theta_i + \varepsilon_{it}$$
+
+其中 $\theta_i$ 是*不随时间变化的个体效应*（能力、地理位置、文化传统等）。若 $\theta_i$ 与 $X_{it}$ 相关，混合 OLS 估计量有偏：
+
+$$\hat{\beta}_{POLS} = \beta + \frac{\operatorname{Cov}(X_{it},\, \theta_i + \varepsilon_{it})}{\operatorname{Var}(X_{it})}$$
+
+横截面数据无法克服这个问题——我们无法区分 $\theta_i$ 与 $\varepsilon_{it}$。但有了面板数据，我们可以用“时间维度”扣除 $\theta_i$——这就是固定效应估计的核心思想。
+
+## 固定效应：Within 变换的推导
+
+**Within 变换**对每个 $i$ 计算时间均值，然后用偏差代替原值。令 $\bar{Z}_i = \dfrac{1}{T_i} \sum_t Z_{it}$，则：
+
+$$(Y_{it} - \bar{Y}_i) = (X_{it} - \bar{X}_i)^\prime \beta + (\theta_i - \theta_i) + (\varepsilon_{it} - \bar{\varepsilon}_i)$$
+
+由于 $\theta_i$ 是常数，$\bar{\theta}_i = \theta_i$，所以 $\theta_i - \bar{\theta}_i = 0$——*个体效应在去均值中被精确消除*。这正是 FE 估计的精髓。
+
+等价形式是**最小二乘虚拟变量**（LSDV）：
+
+$$Y_{it} = X_{it}^\prime \beta + \sum_{j=1}^N \theta_j \mathbf{1}(i = j) + \varepsilon_{it}$$
+
+两种方法的 $\hat{\beta}$ 完全相同，但 LSDV 在 $N$ 大时计算量巨大（需要估计 $N$ 个虚拟变量系数）。Stata 的 `xtreg, fe` 和 `reghdfe` 背后就是 Within 变换；Python 的 `linearmodels.PanelOLS`、R 的 `fixest::feols`、`plm::plm(model=“within”)` 同理。
+
+**一阶差分**（First Difference, FD）是另一种等价方式：
+
+$$Y_{it} - Y_{i,t-1} = (X_{it} - X_{i,t-1})^\prime \beta + (\varepsilon_{it} - \varepsilon_{i,t-1})$$
+
+*两期数据下*，FE 与 FD 完全等价。这是本讲第二部分讨论经典 DiD 时的关键桥梁。
+
+## 代码演示：FE vs. POLS 在模拟数据上的对比
+
+```{python}
+#| code-fold: show
+#| code-summary: "点击查看 FE vs. POLS 对比代码"
+
+np.random.seed(2026)
+N, T = 500, 5
+theta = np.random.normal(0, 2, N)             # 个体固定效应
+
+# 让 X 与 theta 正相关 —— 制造遗漏变量问题
+X = np.zeros((N, T))
+for i in range(N):
+    X[i] = 0.6 * theta[i] + np.random.normal(0, 1, T)
+
+beta_true = 1.5
+Y = beta_true * X + theta[:, None] + np.random.normal(0, 0.5, (N, T))
+
+# 1. Pooled OLS（忽略固定效应）
+from numpy.linalg import lstsq
+X_flat, Y_flat = X.flatten(), Y.flatten()
+X_des = np.c_[np.ones_like(X_flat), X_flat]
+b_pols = lstsq(X_des, Y_flat, rcond=None)[0]
+
+# 2. FE（Within 变换）
+X_demean = X - X.mean(axis=1, keepdims=True)
+Y_demean = Y - Y.mean(axis=1, keepdims=True)
+b_fe = (X_demean * Y_demean).sum() / (X_demean ** 2).sum()
+
+print(f"POLS beta = {b_pols[1]:.3f}  (bias = {b_pols[1] - beta_true:+.3f})")
+print(f"FE   beta = {b_fe:.3f}  (bias = {b_fe - beta_true:+.3f})")
+```
+
+*结果解读*：POLS 被 $\theta_i$ 与 $X$ 的相关性严重污染；FE 把 $\theta_i$ 吸收掉之后，估计几乎无偏。这就是面板数据相对于横截面数据的核心优势。
+
+## R 语言对照
+
+```{r}
+#| eval: false
+
+# R 中使用 fixest 包
+library(fixest)
+
+# 假设数据已整理为长格式：unit, time, Y, X
+fe_model  <- feols(Y ~ X | unit, data = df)
+summary(fe_model)
+
+# 带聚类标准误的 TWFE
+twfe_model <- feols(Y ~ X | unit + time, data = df, cluster = ~unit)
+summary(twfe_model)
+```
+
+## FE 的代价：衰减偏误与低效率
+
+FE 估计*只使用组内变异*。若 $X_{it}$ 随时间变化很小（如教育水平、家庭结构），组内变异稀少：
+
+1. *标准误大*：估计不精确
+2. *衰减偏误被放大*：若 $X_{it}$ 含测量误差 $u_{it}$，则信噪比在差分后恶化
+
+$$\hat{\beta}^{FE}_{bias} = \frac{\operatorname{Var}(X^*_{it} - \bar{X}^*_i)}{\operatorname{Var}(X^*_{it} - \bar{X}^*_i) + \operatorname{Var}(u_{it} - \bar{u}_i)} \beta$$
+
+经典案例：**Almond, Chay & Lee (QJE 2005)** 用*孪生子数据*研究出生体重对健康的因果影响。他们用母亲内部的孪生差分代替混合 OLS——代价是数据量锐减且测量误差放大。他们用孪生子的双重差分把家庭固定效应消灭，但仍需要正面对付衰减偏误。
+
+## 随机效应 vs. 固定效应：Hausman 的逻辑
+
+*随机效应*（RE）假设 $E(\theta_i \mid X_{it}) = 0$——个体效应与解释变量*独立*。此假设成立时，RE 利用了组间变异，估计更有效；此假设不成立时，RE 估计有偏。
+
+*Hausman 检验*比较 $\hat{\beta}_{FE}$ 与 $\hat{\beta}_{RE}$：若两者差异显著，则拒绝 RE 假设。*实务建议*：在政策评估研究中默认 FE——几乎不可能说服审稿人“我的随机效应假设成立”。RE 常见于微观计量教学的标准教科书，但在应用研究的写作中越来越少见。
+
+# 第二部分：经典 2×2 双重差分法 {#sec-did}
+
+## 从直觉到识别
+
+政策评估的根本难题：我们只观测到每个单位在每个时期的*一个*结果，但想估计的*处理效应*需要同时观测“处理”和“未处理”的结果——即潜在结果 $Y_{it}(1)$ 和 $Y_{it}(0)$。
+
+**DiD 的核心假设**：存在一个*未受政策影响的对照组*，其时间变化可以代表“如果处理组没有被处理”的反事实变化。数学上：
+
+$$\hat{\tau}_{DiD} = \underbrace{[\bar{Y}_{T,\text{post}} - \bar{Y}_{T,\text{pre}}]}_{\text{处理组变化}} - \underbrace{[\bar{Y}_{C,\text{post}} - \bar{Y}_{C,\text{pre}}]}_{\text{控制组变化}}$$
+
+处理组的变化反映*时间趋势 + 政策效应*；控制组的变化反映*仅时间趋势*。两者相减就得到*净政策效应*。
+
+## 潜在结果框架下的推导
+
+定义：
+
+- $Y_{it}(1)$：个体 $i$ 在 $t$ 期若被处理的潜在结果
+- $Y_{it}(0)$：个体 $i$ 在 $t$ 期若未被处理的潜在结果
+- $D_i \in \{0, 1\}$：$i$ 是否在处理组
+- $t \in \{0, 1\}$：处理前（0）或处理后（1）
+
+观测到的结果 $Y_{it} = D_{it} Y_{it}(1) + (1 - D_{it}) Y_{it}(0)$，其中 $D_{it} = D_i \cdot \mathbf{1}(t = 1)$。
+
+我们想估计的对象是*处理组的平均处理效应*（ATT）：
+
+$$\tau_{ATT} = E[Y_{i1}(1) - Y_{i1}(0) \mid D_i = 1]$$
+
+DiD 估计量写作：
+
+$$\hat{\tau}_{DiD} = \{E[Y_{i1} \mid D_i = 1] - E[Y_{i0} \mid D_i = 1]\} - \{E[Y_{i1} \mid D_i = 0] - E[Y_{i0} \mid D_i = 0]\}$$
+
+代入 $Y_{it} = D_{it} Y_{it}(1) + (1 - D_{it}) Y_{it}(0)$，展开后可得：
+
+$$\hat{\tau}_{DiD} = \tau_{ATT} + \underbrace{\{E[Y_{i1}(0) - Y_{i0}(0) \mid D = 1] - E[Y_{i1}(0) - Y_{i0}(0) \mid D = 0]\}}_{\text{反事实趋势差}}$$
+
+*平行趋势假设*正是要求第二项等于零：
+
+$$E[Y_{i1}(0) - Y_{i0}(0) \mid D = 1] = E[Y_{i1}(0) - Y_{i0}(0) \mid D = 0]$$
+
+这个假设说的是：*若无处理*，处理组和控制组的*未处理潜在结果*在时间上的变化应当相同。请注意这里讨论的是*反事实*——即使处理组已经被处理，我们仍然假设它若未被处理时的变化路径与控制组相同。
+
+## TWFE 回归：DiD 的回归表达
+
+在经典 2×2 设定下，DiD 估计量可以通过如下回归得到：
+
+$$Y_{it} = \alpha_i + \lambda_t + \tau D_{it} + \varepsilon_{it}$$
+
+其中 $\alpha_i$ 是个体固定效应，$\lambda_t$ 是时间固定效应，$D_{it} = \mathbf{1}(i \in \text{treated}) \times \mathbf{1}(t = 1)$。
+
+在两组两期下：
+
+$$\hat{\tau}_{TWFE} = (\bar{Y}_{T,1} - \bar{Y}_{T,0}) - (\bar{Y}_{C,1} - \bar{Y}_{C,0}) = \hat{\tau}_{DiD}$$
+
+*TWFE 回归系数恰好等于 DiD 估计量*——这不是巧合，而是 FE 在两期下等价于 FD 的直接推论。
+
+## Card-Krueger (1994)：DiD 的教科书案例
+
+1992 年 4 月，新泽西（NJ）把最低工资从 $4.25 提高到 $5.05；邻近的宾夕法尼亚（PA）东部则保持不变。两州经济结构与劳动力市场极其相似，这为“干净”的 DiD 设计提供了绝佳的自然实验。
+
+Card 和 Krueger 对 NJ 与 PA 东部的*410 家*快餐店进行了两次电话调查：政策前（1992 年 2 月）和政策后（1992 年 11 月）。每家店报告的核心指标是*全职等价就业数*（FTE employment）。
+
+*DiD 估计结果*：
+
+| | Pre | Post | Change |
+|:---|:---|:---|:---|
+| NJ（处理组） | 20.44 | 21.03 | +0.59 |
+| PA（对照组） | 23.33 | 21.17 | -2.16 |
+| **DiD** | | | **+2.75** |
+
+也就是说，相比 PA，NJ 的就业*反而增加了 2.75 个 FTE*。这个结果挑战了古典劳动经济学的教科书预测——“提高最低工资必然减少就业”。Card 与 Krueger 因此获得了学界的广泛关注（并部分催生了 2021 年诺贝尔经济学奖）。
+
+::: {.callout-tip}
+**为什么这篇论文经典**
+
+- *选址精巧*：NJ 与 PA 东部同属费城都市圈，经济、人口、语言、文化高度同质
+- *时点外生*：最低工资调整时间由立法进程决定，*先于*餐厅决策
+- *数据公开*：任何研究者都能复现这篇论文——这本身是社会科学罕有的透明度
+- *后续扩展*：Dube, Lester & Reich (ReStat 2010) 用毗邻郡配对设计再次确认低就业效应
+:::
+
+## Python 代码：从零实现 DiD
+
+```{python}
+#| code-fold: show
+#| code-summary: "点击查看完整 DiD 模拟代码"
+
+np.random.seed(42)
+n_units, n_periods = 200, 10
+treat_period = 5
+tau_true = 2.5
+
+unit_fe = np.random.normal(0, 2, n_units)
+time_fe = np.linspace(0, 3, n_periods)
+treated = np.arange(n_units) < 100
+
+rows = []
+for i in range(n_units):
+    for t in range(n_periods):
+        d = 1 if (treated[i] and t >= treat_period) else 0
+        y = unit_fe[i] + time_fe[t] + tau_true * d + np.random.normal(0, 1)
+        rows.append({'unit': i, 'time': t, 'treated': treated[i], 'D': d, 'Y': y})
+
+df = pd.DataFrame(rows)
+
+# 方法 1：群体均值差分
+means = df.groupby(['treated', 'time'])['Y'].mean().unstack(level=0)
+y_t_post = means[True].iloc[treat_period:].mean()
+y_t_pre  = means[True].iloc[:treat_period].mean()
+y_c_post = means[False].iloc[treat_period:].mean()
+y_c_pre  = means[False].iloc[:treat_period].mean()
+did_raw  = (y_t_post - y_t_pre) - (y_c_post - y_c_pre)
+
+# 方法 2：TWFE 回归（Within 双向去均值）
+Y_mat = df.pivot(index='unit', columns='time', values='Y').values
+D_mat = df.pivot(index='unit', columns='time', values='D').values.astype(float)
+Y_dm = Y_mat - Y_mat.mean(axis=1, keepdims=True) - Y_mat.mean(axis=0) + Y_mat.mean()
+D_dm = D_mat - D_mat.mean(axis=1, keepdims=True) - D_mat.mean(axis=0) + D_mat.mean()
+y = Y_dm.flatten(); x = D_dm.flatten()
+b_twfe = (x * y).sum() / (x * x).sum()
+r = y - b_twfe * x
+xr = (x * r).reshape(n_units, n_periods).sum(axis=1)
+se_cl = np.sqrt((xr ** 2).sum() / (x * x).sum() ** 2 * n_units / (n_units - 1))
+
+print(f"真实 tau  = {tau_true:.3f}")
+print(f"DiD（均值差分）= {did_raw:.3f}")
+print(f"TWFE 回归系数  = {b_twfe:.3f}  (聚类 SE = {se_cl:.3f})")
+```
+
+两种计算方式结果一致，这确认了 TWFE 回归在 2×2 设定下的数学等价性。
+
+## 可视化：DiD 的“剪刀图”
+
+```{python}
+#| fig-cap: "经典 DiD 图：处理组与控制组的路径在政策实施后分叉"
+
+fig, ax = plt.subplots(figsize=(11, 5.5))
+ax.plot(range(n_periods), means[True], 'o-', color='#003153',
+        linewidth=2.5, markersize=9, label='处理组')
+ax.plot(range(n_periods), means[False], 's-', color='#00A8CC',
+        linewidth=2.5, markersize=9, label='控制组')
+ax.axvline(treat_period - 0.5, color='#AE0B2A', linestyle='--',
+           linewidth=2, label='政策实施')
+# 虚线：反事实（如果处理组无政策）
+counterfactual = means[True].iloc[treat_period - 1] + \
+    (means[False] - means[False].iloc[treat_period - 1])
+ax.plot(range(treat_period - 1, n_periods),
+        counterfactual.iloc[treat_period - 1:],
+        'o--', color='#003153', alpha=0.4, linewidth=2,
+        markersize=9, label='处理组反事实')
+ax.set_xlabel('时期', fontsize=13)
+ax.set_ylabel('平均结果', fontsize=13)
+ax.set_title('经典 2×2 DiD：处理组、控制组、反事实路径', fontsize=14)
+ax.legend(fontsize=12, loc='upper left')
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+## 事件研究：把 DiD 做成动态
+
+事件研究把处理效应按*相对处理时间*分解：
+
+$$Y_{it} = \alpha_i + \lambda_t + \sum_{k = -K,\ k \neq -1}^{L} \beta_k \cdot \mathbf{1}(t - g_i = k) + \varepsilon_{it}$$
+
+其中 $g_i$ 是 $i$ 首次被处理的时期；$k$ 是相对处理时间；$k = -1$ 作为*基准期*被约束为零。
+
+这个回归同时完成两件事：
+
+1. *预趋势检验*：$\hat{\beta}_k$ 对 $k < 0$ 应接近零。若预趋势系数显著非零，则平行趋势可疑。
+2. *动态效应描述*：$\hat{\beta}_k$ 对 $k \geq 0$ 描述处理效应随时间的累积 / 衰减模式。
+
+```{python}
+#| code-fold: show
+#| code-summary: "点击查看事件研究回归代码"
+#| fig-cap: "事件研究图：预趋势为零、处理效应在 k=0 后出现"
+
+event_times = [k for k in range(-4, 6) if k != -1]
+n_events = len(event_times)
+
+# 构造事件时间虚拟变量矩阵（仅处理组非零）
+rel_time = np.where(treated[:, None], np.arange(n_periods) - treat_period, 999)
+E = np.zeros((n_units, n_periods, n_events))
+for j, k in enumerate(event_times):
+    E[:, :, j] = (rel_time == k).astype(float)
+
+# 把 E、Y 按 within 变换（对 unit 与 time 分别去均值 + 加总均值）
+def dm(arr):
+    return arr - arr.mean(axis=1, keepdims=True) - arr.mean(axis=0) + arr.mean()
+
+Y_arr = np.array([[unit_fe[i] + time_fe[t] + tau_true * (treated[i] and t >= treat_period)
+                    + np.random.RandomState(2026 * n_units * n_periods + i * n_periods + t).normal(0, 1)
+                   for t in range(n_periods)] for i in range(n_units)])
+# 更快：直接从 df['Y']
+Y_mat = df.pivot(index='unit', columns='time', values='Y').values
+Y_dm = dm(Y_mat)
+E_dm = np.stack([dm(E[:, :, j]) for j in range(n_events)], axis=-1)
+
+X = E_dm.reshape(-1, n_events)
+y = Y_dm.flatten()
+beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+resid = y - X @ beta
+# 聚类到单位的"三明治"SE
+XtX_inv = np.linalg.pinv(X.T @ X)
+X_3d = X.reshape(n_units, n_periods, n_events)
+r_3d = resid.reshape(n_units, n_periods)
+score = np.einsum('itk,it->ik', X_3d, r_3d)
+meat = score.T @ score
+V = XtX_inv @ meat @ XtX_inv * n_units / (n_units - 1)
+se = np.sqrt(np.diag(V))
+
+coef_table = pd.DataFrame({
+    'rel_time': event_times,
+    'coef': beta,
+    'se': se,
+}).sort_values('rel_time')
+
+fig, ax = plt.subplots(figsize=(11, 5.5))
+ax.errorbar(coef_table['rel_time'], coef_table['coef'],
+            yerr=1.96 * coef_table['se'], fmt='o',
+            color='#003153', ecolor='#003153', capsize=5,
+            markersize=9, linewidth=1.8, markerfacecolor='white')
+ax.axhline(0, color='gray', linewidth=0.8)
+ax.axvline(-0.5, color='#AE0B2A', linestyle='--', label='处理时点')
+ax.set_xlabel('相对处理时间', fontsize=13)
+ax.set_ylabel('事件研究系数', fontsize=13)
+ax.set_title('事件研究：预趋势（k<0）应接近零，处理后（k≥0）应体现效应', fontsize=14)
+ax.legend(fontsize=11)
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+在这个模拟下，真实 $\tau = 2.5$ 是时不变的——所以 $k \geq 0$ 的系数应在 2.5 附近波动。若我们生成的真实效应随时间增长（下一讲会这样做），事件研究图将显示效应*爬升曲线*。
+
+## R 语言对照：fixest 跑 TWFE 和事件研究
+
+```{r}
+#| eval: false
+
+library(fixest)
+
+# TWFE 回归（与 Python 对应）
+twfe <- feols(Y ~ D | unit + time, data = df, cluster = ~unit)
+summary(twfe)
+
+# 事件研究回归
+df$rel_time <- ifelse(df$treated, df$time - treat_period, NA)
+es <- feols(Y ~ i(rel_time, treated, ref = -1) | unit + time,
+            data = df, cluster = ~unit)
+iplot(es, xlab = "相对处理时间", ylab = "事件研究系数")
+```
+
+# 第三部分：Monte Carlo——聚类标准误的必要性 {#sec-cluster-mc}
+
+## 问题的严重性：BDM (2004)
+
+**Bertrand, Duflo & Mullainathan (QJE 2004)** 做了一个至今被每篇 DiD 论文引用的实验。他们取 50 个州 × 21 年的女性工资面板数据，*完全随机*地把州分配到“处理组”和“控制组”，并在随机年份赋予一个“不存在”的政策。真实政策效应 = 0。
+
+然后他们跑 200 次这样的模拟，看不同标准误方法下的 t 检验拒绝率。结果令人震惊：
+
+- *iid 标准误*：45% 的实验在 5% 水平上拒绝原假设
+- *按州聚类*：回到 5% 附近
+
+*根源*：州层面的冲击高度持续——石油危机、大萧条、产业结构调整。这些跨州异质但州内相关的冲击让“独立观测”假设完全破产。
+
+## MC 实验设计
+
+我们来亲手复现 BDM 的发现。设计如下：
+
+- *500 个单位 × 10 期面板*
+- 误差项 $\varepsilon_{it}$ 在单位内*AR(1) 序列相关*：$\varepsilon_{it} = \rho \varepsilon_{i,t-1} + u_{it}$，$\rho = 0.8$
+- 从 500 个单位中*随机*选 100 个作为处理组，在 $t = 5$ 起“接受”一个假政策——*真实效应为 0*
+- 跑 300 次重复，每次记录 TWFE 的 $p$ 值在三种标准误下
+- 比较：*iid / 稳健（HC1）/ 按单位聚类*
+
+如果真实效应为 0 且名义显著性水平为 5%，那么理论上应该有 5% 的重复拒绝原假设。任何超出的拒绝率都是推断失真。
+
+## 代码实现
+
+```{python}
+#| code-fold: show
+#| code-summary: "点击查看 Monte Carlo 聚类对比代码"
+
+def simulate_panel(n_units=500, n_periods=10, rho=0.8, treat_effect=0.0, seed=0):
+    rng = np.random.default_rng(seed)
+    unit_fe = rng.normal(0, 1, n_units)
+    time_fe = rng.normal(0, 1, n_periods)
+    eps = np.zeros((n_units, n_periods))
+    eps[:, 0] = rng.normal(0, 1, n_units)
+    for t in range(1, n_periods):
+        eps[:, t] = rho * eps[:, t - 1] + rng.normal(0, 1, n_units)
+    treated_idx = rng.choice(n_units, size=n_units // 5, replace=False)
+    is_treated = np.zeros(n_units, dtype=bool)
+    is_treated[treated_idx] = True
+    D = np.zeros((n_units, n_periods))
+    D[is_treated, 5:] = 1
+    Y = unit_fe[:, None] + time_fe[None, :] + treat_effect * D + eps
+    return Y, D, is_treated
+
+
+from scipy import stats
+
+def twfe_pvalues(seed):
+    """用 Within 双向去均值得到 TWFE 系数 + 三种 SE 的 p 值"""
+    Y, D, _ = simulate_panel(seed=seed)
+    n, T = Y.shape
+    Y_dm = Y - Y.mean(axis=1, keepdims=True) - Y.mean(axis=0) + Y.mean()
+    D_dm = D - D.mean(axis=1, keepdims=True) - D.mean(axis=0) + D.mean()
+    y = Y_dm.flatten(); x = D_dm.flatten()
+    b = (x * y).sum() / (x * x).sum()
+    r = y - b * x
+    df_adj = n * T - n - T
+    # iid SE
+    se_iid = np.sqrt((r * r).sum() / df_adj / (x * x).sum())
+    # HC1 稳健
+    se_hc = np.sqrt(((x * r) ** 2).sum() / (x * x).sum() ** 2 * (n * T) / df_adj)
+    # 按单位聚类
+    xr = (x * r).reshape(n, T).sum(axis=1)
+    se_cl = np.sqrt((xr ** 2).sum() / (x * x).sum() ** 2 * n / (n - 1))
+    p_iid = 2 * (1 - stats.t.cdf(abs(b / se_iid), df=df_adj))
+    p_hc  = 2 * (1 - stats.t.cdf(abs(b / se_hc),  df=df_adj))
+    p_cl  = 2 * (1 - stats.t.cdf(abs(b / se_cl),  df=n - 1))
+    return p_iid, p_hc, p_cl
+
+
+n_sims = 300
+pvals = np.array([twfe_pvalues(s) for s in range(n_sims)])
+reject = (pvals < 0.05).mean(axis=0) * 100
+print(f"名义 5% 水平下，实际拒绝率：")
+print(f"  iid 标准误       : {reject[0]:.1f}%")
+print(f"  HC1 稳健标准误   : {reject[1]:.1f}%")
+print(f"  按单位聚类标准误 : {reject[2]:.1f}%")
+```
+
+## 结论可视化
+
+```{python}
+#| fig-cap: "三种标准误在真实效应 = 0 时的拒绝率：iid 与 HC1 严重过度拒绝"
+
+labels = ['iid 标准误', 'HC1 稳健', '按单位聚类']
+colors = ['#AE0B2A', '#D9A441', '#003153']
+
+fig, ax = plt.subplots(figsize=(10, 5.5))
+bars = ax.bar(labels, reject, color=colors, edgecolor='white', linewidth=1.5)
+ax.axhline(5, color='#555', linestyle='--', linewidth=1.5, label='名义 5% 水平')
+ax.set_ylabel('拒绝原假设的比例 (%)', fontsize=13)
+ax.set_title('聚类标准误的 Monte Carlo 对比（300 次重复）', fontsize=14)
+ax.set_ylim(0, max(reject.max() + 5, 15))
+for bar, r in zip(bars, reject):
+    ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
+            f'{r:.1f}%', ha='center', fontsize=13, fontweight='bold')
+ax.legend(fontsize=12)
+ax.grid(axis='y', alpha=0.3)
+plt.tight_layout()
+plt.show()
+```
+
+## Cameron-Miller (2015) 的黄金规则
+
+在应用研究中，“该在哪个层级聚类”是无数 SSRN 讨论与审稿人意见的焦点。Cameron & Miller (JHR 2015) 的黄金三条：
+
+1. **在政策分配的最细层级上聚类**。政策在省级实施，就聚到省；在企业级实施，就聚到企业。不要比分配层级更细（会低估 SE），也不要更粗（会过分保守且损失功效）。
+2. **聚类数 $G \geq 50$ 时**，聚类稳健标准误的渐近理论成立，基于 $t(G-1)$ 的推断可靠。
+3. **$G < 50$ 时**，使用 *Wild Cluster Bootstrap*（Cameron-Gelbach-Miller 2008, *ReStat*）或*Randomization Inference*（MacKinnon & Webb 2020）。
+
+**Stata 语法**：
+
+```stata
+* 标准聚类
+reghdfe Y D, absorb(unit year) vce(cluster province)
+
+* 聚类数少时：Wild Bootstrap
+boottest D, boottype(wild-t) reps(999)
+```
+
+**R 语法**：
+
+```r
+# fixest 包的聚类
+feols(Y ~ D | unit + year, data = df, cluster = ~province)
+
+# Wild Bootstrap
+library(fwildclusterboot)
+boottest(model, param = "D", clustid = "province", B = 999)
+```
+
+## 两维聚类
+
+有时同一观测属于两个“维度”的群组。例如企业属于*城市*（$G$）和*行业*（$H$）。Cameron-Gelbach-Miller (2011) 证明：
+
+$$\hat{V}(\hat{\beta}) = \hat{V}^G(\hat{\beta}) + \hat{V}^H(\hat{\beta}) - \hat{V}^{G \cap H}(\hat{\beta})$$
+
+实现方式就是分别按 $G$、$H$、$G \cap H$ 聚类三次，然后加减。Stata：`vce(cluster province industry)`；R：`cluster = ~ province + industry`。
+
+::: {.callout-warning}
+**两维聚类的陷阱**
+
+两维聚类在*每一维都有 $G \geq 30$* 时可靠。若某一维只有 10 个群组，那一维的贡献很不稳定——此时应考虑只聚类数大的一维，或改用 Wild Bootstrap。
+:::
+
+## 什么时候不需要聚类？
+
+Abadie, Athey, Imbens, Wooldridge (QJE 2023) 提出了一个*设计基础*（design-based）的新视角：**聚类的理由是处理分配的随机性结构，而非误差的相关性结构**。
+
+具体来说：
+
+- 若*样本 = 总体*（整个 50 个州），且*处理是在州级随机分配*，那么在州级聚类是合适的——因为随机化发生在州层面
+- 若*样本是总体的随机抽样*，且处理在个体层面独立分配，则*不需要聚类*——即使误差在州内相关
+
+这个视角在最近几年的顶级期刊正在成为主流。实务上对大多数应用研究者而言，仍然遵循 Cameron-Miller 的经验规则，但在写论文时补一句“设计基础视角下我的聚类选择也是合理的”会让审稿人满意。
+
+# 第四部分：DiD 研究的稳健性清单 {#sec-robustness}
+
+一份合格的 DiD 论文，应当在正文或附录里报告以下*至少五到七项*稳健性检验。这些不是“锦上添花”——审稿人几乎一定会追问其中的若干项。
+
+## 清单七项
+
+1. **识别假设明说**：在“识别策略”或“研究设计”小节，明确写出*平行趋势*和*无预期*假设，并说明为什么这些假设在你的情境下合理。
+2. **预趋势检验**：展示事件研究图，$k < 0$ 的系数是否齐平于零？若不齐平，讨论为什么（异质选择 / 时变混杂 / 提前响应）。
+3. **安慰剂政策**：假装政策提前 3 期或延后 3 期实施，重跑 DiD——若仍显示显著效应，平行趋势可能失效。
+4. **聚类敏感性**：至少报告一个替代聚类层级（例如从省改为大区），观察 SE 变化。
+5. **Wild Bootstrap**（若 $G < 50$）：在正文或附录确认主要系数的 Wild Bootstrap p 值。
+6. **组别异质性**：若你的样本包含多类处理单位（如东部 / 中西部），分样本跑 DiD 检查异质性。
+7. **替代对照组**：排除可能受溢出影响的单位（邻省、邻行业），重新估计稳健性。
+
+## 预趋势失败怎么办？
+
+这是应用研究中最让人头疼的情况。一些“错误但常见”的应对：
+
+- **“加个时间趋势项”**：$Y_{it} = \alpha_i + \lambda_t + \gamma_i \cdot t + \tau D_{it} + \varepsilon_{it}$。问题：若处理组*真的有上升趋势*（所以选择了政策），趋势项会*吸收掉真实效应*。
+- **“换一个更干净的对照组”**：如果换组的理由是“其他组不平行”，这接近*样本选择以迎合结论*。审稿人会怀疑你挑选了有利样本。
+- **“截掉早期样本”**：若数据预注册了分析窗口，临时调整窗口是违反预注册原则。
+
+*正确的应对*：
+
+- 在正文里坦诚展示预趋势图，不遮掩
+- 讨论预趋势的可能来源（时变混杂 / 预期效应 / 函数形式）
+- 退到*稳健性更强的识别策略*：IV、合成控制、断点、分位数 DiD
+- 考虑*改用异质性鲁棒的现代 DiD 方法*（下一讲主题）
+
+## 实战案例：Dube-Lester-Reich (2010)
+
+Dube, Lester & Reich (ReStat 2010) 重新检验了 Card-Krueger 的最低工资就业效应。他们用*州际相邻郡配对*作为对照组——每对郡横跨州界，地理相邻但最低工资政策不同。这是比“整州级别对比”更严格的识别策略。
+
+结论与 Card-Krueger 一致：*最低工资对就业的负效应接近零*。这篇论文说明：*DiD 不是黑盒*——对照组选择本身是识别策略的一部分，多种对照组都给相似结果，才是最有力的稳健性证据。
+
+# 第五部分：总结 {#sec-summary}
+
+## 本讲要点回顾
+
+### 1. 面板数据解锁了“组内变异”
+
+同一单位在多个时期的重复观测让我们可以扣除*时不变异质性*——这是横截面数据做不到的。
+
+### 2. 固定效应的两张脸
+
+Within 变换（去均值）和 LSDV（虚拟变量）数学等价，都消灭 $\theta_i$。FD 在两期下也等价于 FE，这为经典 2×2 DiD 铺平了道路。
+
+### 3. 经典 DiD 在潜在结果框架下的识别
+
+在*平行趋势*（反事实趋势相同）和*无预期*（处理前无提前响应）假设下，DiD 一致估计 ATT。TWFE 回归在 2×2 设定下与 DiD 完全等价。
+
+### 4. 平行趋势不可直接检验
+
+预趋势检验只是*必要不充分*条件——处理前趋势平行不保证处理后反事实趋势平行。
+
+### 5. 聚类标准误是 DiD 的“必修课”
+
+BDM(2004) 的 45% 假阳性率告诫我们：面板误差几乎总是序列相关，忽视就过度拒绝。Cameron-Miller (2015) 的黄金规则给出了实操指南。
+
+## 关键公式汇总
+
+| 概念 | 公式 | 说明 |
+|:---|:---|:---|
+| FE（Within 变换）| $(Y_{it} - \bar{Y}_i) = (X_{it} - \bar{X}_i)^\prime \beta + (\varepsilon_{it} - \bar{\varepsilon}_i)$ | 消灭 $\theta_i$ |
+| DiD 估计量 | $\hat{\tau}_{DiD} = (\bar{Y}_{T,1} - \bar{Y}_{T,0}) - (\bar{Y}_{C,1} - \bar{Y}_{C,0})$ | 两组两期差分 |
+| TWFE 回归 | $Y_{it} = \alpha_i + \lambda_t + \tau D_{it} + \varepsilon_{it}$ | DiD 的回归表达 |
+| 平行趋势假设 | $E[\Delta Y(0) \mid D=1] = E[\Delta Y(0) \mid D=0]$ | 反事实趋势一致 |
+| 两维聚类 | $\hat{V} = \hat{V}^G + \hat{V}^H - \hat{V}^{G \cap H}$ | Cameron et al. (2011) |
+
+## 下一讲预告
+
+**第 4 周：交错处理、现代 DiD 与合成控制**
+
+当政策*分批次*在不同单位生效（这是现实里几乎所有政策评估的形式），经典 TWFE 会悄悄失效——甚至可能给出*错误符号*的估计量。下一讲我们将：
+
+1. *Goodman-Bacon 分解*：看清 TWFE = 所有 2×2 DiD 的加权平均，以及哪些权重会变成负的
+2. *现代估计量*：Callaway-Sant'Anna、Sun-Abraham、Borusyak et al.、de Chaisemartin & D'Haultfoeuille
+3. *Stata 实战*：在同一个 DGP 上对比五种估计量，亲手看“修复”的过程
+4. *合成控制法*：单一处理单位时的“加权反事实”
+
+## 课后思考
+
+1. **在你的研究领域**，哪些政策 / 制度变革可以用经典 2×2 DiD 设计？这个政策在*分配层级*（省 / 市 / 县 / 企业）上有什么特点？这决定了你的聚类层级。
+2. **平行趋势假设在你的情境下是否合理**？有哪些潜在的违反来源？（如：处理单位选择、预期行为、时变混杂）请列出 2–3 个具体场景。
+3. **若你的聚类数少于 30**（例如只有 20 个省的政策研究），你会如何调整推断策略？Wild Bootstrap、Randomization Inference、Bayesian 方法——每种的优缺点是什么？
+
+---
+
+**联系方式**
+
+- 邮箱：chenzhiyuan@rmbs.ruc.edu.cn
+- 办公室：919
+- Office Hours：邮件或微信预约
+
+*本讲义基于 Cameron & Miller (JHR 2015)、Bertrand-Duflo-Mullainathan (QJE 2004)、Wooldridge (2010, Ch.10–11) 以及 Card-Krueger (1994) 等文献整理而成。*
